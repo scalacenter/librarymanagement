@@ -307,12 +307,13 @@ private[sbt] case class SbtChainResolver(
       data: ResolveData,
       resolver: DependencyResolver,
       rmr: ResolvedModuleRevision
-  ): ResolvedModuleRevision =
+  ): ResolvedModuleRevision = {
     // TODO - Redownloading/parsing the ivy file is not really the best way to make this correct.
     //        We should figure out a better alternative, or directly attack the resolvers Ivy uses to
     //        give them correct behavior around -SNAPSHOT.
+    val start = System.currentTimeMillis()
     Option(resolver.findIvyFileRef(dd, data)) flatMap { ivyFile =>
-      ivyFile.getResource match {
+      val reparsedDescriptor = ivyFile.getResource match {
         case r: FileResource =>
           try {
             val parser = rmr.getDescriptor.getParser
@@ -323,12 +324,16 @@ private[sbt] case class SbtChainResolver(
           }
         case _ => None
       }
+      val end = System.currentTimeMillis()
+      Message.debug(s"Parsing ivy file for $dd SNAPSHOT descriptor takes ${end - start}ms.")
+      reparsedDescriptor
     } getOrElse {
       Message.warn(
         s"Unable to reparse ${dd.getDependencyRevisionId} from $resolver, using ${rmr.getPublicationDate}"
       )
       rmr
     }
+  }
 
   /** Ported from BasicResolver#findFirstAirfactRef. */
   private[this] def findFirstArtifactRef(
