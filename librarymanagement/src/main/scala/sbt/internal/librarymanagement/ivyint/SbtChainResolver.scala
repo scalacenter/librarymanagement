@@ -167,6 +167,44 @@ private[sbt] case class SbtChainResolver(
         }
       }
     }
+    private def reportError(throwable: Throwable,
+                            resolver: DependencyResolver,
+                            descriptor: DependencyDescriptor): Unit = {
+      val trace = getStackTrace(throwable)
+      Message.verbose(s"problem occurred while resolving $descriptor with $resolver: $trace")
+    }
+
+    def getResultsFromSnapshot(
+        resolved0: Option[ResolvedModuleRevision],
+        useLatest: Boolean,
+        data: ResolveData,
+        descriptor: DependencyDescriptor
+    ): Seq[Either[Throwable, TriedResolution]] = {
+
+      def performResolution(
+          resolver: DependencyResolver): Option[(ResolvedModuleRevision, DependencyResolver)] = {
+        data.setCurrentResolvedModuleRevision(null)
+        Option(resolver.getDependency(descriptor, data)).map(resolved =>
+          (reparseModuleDescriptor(descriptor, data, resolver, resolved), resolver))
+      }
+
+      // Return none when revision is cached and `isReturnFirst` is set
+      if (isReturnFirst && resolved0.isDefined) Vector(Right(None))
+      else {
+        // Resolve all snapshots in parallel
+        resolvers.toParArray.map { (resolver: DependencyResolver) =>
+          val oldLatest: Option[LatestStrategy] =
+            setLatestIfRequired(resolver, Option(getLatestStrategy))
+          try Right(performResolution(resolver))
+          catch {
+            case NonFatal(t) => reportError(t, resolver, descriptor); Left(t)
+          } finally {
+            oldLatest.foreach(_ => doSetLatestStrategy(resolver, oldLatest))
+            checkInterrupted()
+          }
+        }.toVector
+      }
+    }
 
     private final val prefix = "Undefined resolution order"
     def resolveLatest(foundRevisions: Seq[(ResolvedModuleRevision, DependencyResolver)],
